@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Dice Game</title>
+</head>
+
+<body style="text-align:center; background:#111; color:white; font-family:sans-serif;">
+
+<h1>🎲 Dice Game</h1>
+<h2 id="bal">Balance: ₹0</h2>
+
+<input id="uid" placeholder="User ID">
+<input id="bet" placeholder="Bet">
+
+<br><br>
+
+<button onclick="play('big')">BIG</button>
+<button onclick="play('small')">SMALL</button>
+
+<h1 id="dice">🎲</h1>
+
+<script>
+
+const API = "https://dice-server-92bw.onrender.com/";
+
+async function load(uid){
+ let r = await fetch(API + "/balance/" + uid);
+ let d = await r.json();
+ document.getElementById("bal").innerText = "Balance: ₹" + d.balance;
+}
+
+function play(choice){
+ let uid = document.getElementById("uid").value;
+ let bet = document.getElementById("bet").value;
+
+ let roll = Math.floor(Math.random()*6)+1;
+ let res = roll>=4?"big":"small";
+
+ document.getElementById("dice").innerText = roll;
+
+ if(choice==res){
+  alert("You Win");
+ } else {
+  alert("You Lose");
+ }
+
+ load(uid);
+}
+
+</script>
+
+</body>
+</html>
