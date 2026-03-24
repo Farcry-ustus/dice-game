@@ -63,7 +63,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in data:
         data[uid] = {"balance":0,"deposit_total":0}
 
-    # RESET FLOW
     if text in ["🎮 Play Game","📊 Balance","💰 Deposit","💸 Withdraw","🔗 Refer","🏆 Leaderboard","🏠 Menu","👨‍💻 Admin Panel"]:
         context.user_data.clear()
 
@@ -167,43 +166,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "\n".join([f"{u} → ₹{data[u]['balance']}" for u in data])
         await update.message.reply_text(msg[:4000])
 
-    elif text == "➕ Add" and int(uid) == ADMIN_ID:
-        await update.message.reply_text("User ID:")
-        context.user_data["action"] = "add_user"
-
-    elif context.user_data.get("action") == "add_user":
-        context.user_data["target"] = text
-        await update.message.reply_text("Amount:")
-        context.user_data["action"] = "add_amt"
-
-    elif context.user_data.get("action") == "add_amt":
-        uid2 = context.user_data["target"]
-        amt = int(text)
-        data[uid2]["balance"] += amt
-        save(data)
-        await context.bot.send_message(uid2, f"₹{amt} added")
-        await update.message.reply_text("Done")
-        context.user_data.clear()
-
-    elif text == "➖ Deduct" and int(uid) == ADMIN_ID:
-        await update.message.reply_text("User ID:")
-        context.user_data["action"] = "ded_user"
-
-    elif context.user_data.get("action") == "ded_user":
-        context.user_data["target"] = text
-        await update.message.reply_text("Amount:")
-        context.user_data["action"] = "ded_amt"
-
-    elif context.user_data.get("action") == "ded_amt":
-        uid2 = context.user_data["target"]
-        amt = int(text)
-        data[uid2]["balance"] -= amt
-        save(data)
-        await context.bot.send_message(uid2, f"₹{amt} deducted")
-        await update.message.reply_text("Done")
-        context.user_data.clear()
-
-# ===== BUTTON =====
+# ===== BUTTONS =====
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -250,7 +213,7 @@ app = Flask(__name__)
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), bot.bot)
-    asyncio.run(bot.process_update(update))
+    bot.update_queue.put_nowait(update)  # 🔥 FIXED (NO CRASH)
     return "ok"
 
 @app.route("/")
