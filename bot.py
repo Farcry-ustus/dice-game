@@ -1,169 +1,161 @@
-import json
 import os
-from telegram import *
-from telegram.ext import *
+import json
+from flask import Flask, request
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 BOT_TOKEN = "8749615890:AAHqCJAy7Dr23sXF6Z37YrIjxbCMKZ8Vuxw"
-ADMIN_ID = 8190804216
-BOT_USERNAME = "CRYPWIN_BOT"
+ADMIN_ID = "8190804216"
+RENDER_URL = "https://dice-game-16.onrender.com"
 
-QR_TARGET = None
+DATA_FILE = "users.json"
 
-# ===== DATA =====
-def load():
+# ---------- DATABASE ----------
+def load_data():
     try:
-        return json.load(open("users.json"))
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
     except:
         return {}
 
-def save(data):
-    json.dump(data, open("users.json","w"), indent=4)
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
-# ===== MENU =====
-def menu(uid):
-    kb = [
-        ["🎮 Play Game","📊 Balance"],
-        ["💰 Deposit","💸 Withdraw"],
-        ["🔗 Refer","🏆 Leaderboard"],
-        ["🏠 Menu"]
-    ]
-    if int(uid) == ADMIN_ID:
-        kb.append(["👨‍💻 Admin Panel"])
-    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
+users = load_data()
 
-# ===== START =====
+def get_user(uid):
+    uid = str(uid)
+    if uid not in users:
+        users[uid] = {
+            "balance": 0,
+            "ref": None,
+            "deposited": 0
+        }
+    return users[uid]
+
+# ---------- BOT ----------
+app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    data = load()
+    user = update.effective_user
+    uid = str(user.id)
 
-    ref = context.args[0] if context.args else None
+    args = context.args
+    if args:
+        ref_id = args[0]
+        if ref_id != uid:
+            get_user(uid)["ref"] = ref_id
+            if ref_id in users:
+                users[ref_id]["balance"] += 30
 
-    if uid not in data:
-        data[uid] = {"balance":20,"deposit_total":0}
+    save_data(users)
 
-        if ref and ref != uid and ref in data:
-            data[ref]["balance"] += 30
-            await context.bot.send_message(ref,"🎉 ₹30 referral bonus!")
+    keyboard = [
+        [InlineKeyboardButton("💳 Deposit", callback_data="deposit")],
+        [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
+        [InlineKeyboardButton("📊 Balance", callback_data="balance")],
+        [InlineKeyboardButton("🏆 Leaderboard", callback_data="leader")],
+        [InlineKeyboardButton("🔗 Refer", callback_data="refer")]
+    ]
 
-        save(data)
-        await update.message.reply_text("🎁 ₹20 bonus credited!")
+    await update.message.reply_text(
+        "🎮 Welcome to Dice Game Bot",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    await update.message.reply_text("🏠 Menu", reply_markup=menu(uid))
-
-# ===== MAIN =====
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global QR_TARGET
-
-    uid = str(update.effective_user.id)
-    data = load()
-    text = update.message.text if update.message.text else ""
-
-    if uid not in data:
-        data[uid] = {"balance":0,"deposit_total":0}
-
-    if text in ["🎮 Play Game","📊 Balance","💰 Deposit","💸 Withdraw","🔗 Refer","🏆 Leaderboard","🏠 Menu","👨‍💻 Admin Panel"]:
-        context.user_data.clear()
-
-    if text == "📊 Balance":
-        await update.message.reply_text(f"💰 ₹{data[uid]['balance']}")
-
-    elif text == "💰 Deposit":
-        await update.message.reply_text("Enter amount (min ₹101):")
-        context.user_data["action"] = "deposit_amount"
-
-    elif context.user_data.get("action") == "deposit_amount":
-        try:
-            amt = int(text)
-            if amt < 101:
-                await update.message.reply_text("❌ Minimum ₹101")
-                return
-
-            context.user_data["deposit_amt"] = amt
-            await context.bot.send_message(ADMIN_ID, f"User {uid} wants deposit ₹{amt}\nUse /sendqr {uid}")
-            await update.message.reply_text("⏳ Waiting for QR")
-            context.user_data["action"] = "wait_qr"
-        except:
-            await update.message.reply_text("Enter valid number")
-
-    elif update.message.photo and update.effective_user.id == ADMIN_ID:
-        if QR_TARGET:
-            await context.bot.send_photo(QR_TARGET, update.message.photo[-1].file_id, caption="Scan & Pay then send screenshot")
-            await update.message.reply_text("✅ QR Sent")
-            QR_TARGET = None
-
-    elif update.message.photo and context.user_data.get("deposit_amt"):
-        amt = context.user_data["deposit_amt"]
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{uid}_{amt}"),
-             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{uid}")]
-        ])
-
-        await context.bot.send_photo(ADMIN_ID, update.message.photo[-1].file_id,
-                                    caption=f"Deposit Proof\nUser:{uid}\n₹{amt}",
-                                    reply_markup=kb)
-
-        await update.message.reply_text("✅ Sent for approval")
-        context.user_data.clear()
-
-    elif text == "💸 Withdraw":
-        if data[uid]["deposit_total"] < 101:
-            await update.message.reply_text("❌ Deposit ₹101 first")
-            return
-
-        await update.message.reply_text("Enter amount:")
-        context.user_data["action"] = "withdraw_amt"
-
-    elif context.user_data.get("action") == "withdraw_amt":
-        try:
-            amt = int(text)
-
-            if amt > data[uid]["balance"]:
-                await update.message.reply_text("❌ Insufficient balance")
-                return
-
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Approve", callback_data=f"wapprove_{uid}_{amt}"),
-                 InlineKeyboardButton("❌ Reject", callback_data=f"wreject_{uid}")]
-            ])
-
-            await context.bot.send_message(ADMIN_ID, f"Withdraw Request\nUser:{uid}\n₹{amt}", reply_markup=kb)
-            await update.message.reply_text("⏳ Waiting admin approval")
-            context.user_data.clear()
-
-        except:
-            await update.message.reply_text("Enter valid number")
-
-    elif text == "🔗 Refer":
-        link = f"https://t.me/{BOT_USERNAME}?start={uid}"
-        await update.message.reply_text(f"Invite & earn ₹30\n{link}")
-
-# ===== BUTTONS =====
+# ---------- BUTTON HANDLER ----------
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = load()
-    d = query.data.split("_")
 
-    if d[0] == "approve":
-        uid, amt = d[1], int(d[2])
-        data[uid]["balance"] += amt
-        data[uid]["deposit_total"] += amt
-        save(data)
-        await context.bot.send_message(uid, f"✅ Deposit ₹{amt} approved")
-        await query.edit_message_caption("Approved")
+    uid = str(query.from_user.id)
+    user = get_user(uid)
 
-    elif d[0] == "wapprove":
-        await context.bot.send_message(d[1], "✅ Fund transferred")
-        await query.edit_message_text("Approved")
+    if query.data == "balance":
+        await query.message.reply_text(f"💰 Balance: ₹{user['balance']}")
 
-# ===== RUN =====
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("sendqr", sendqr))
-app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle))
-app.add_handler(CallbackQueryHandler(button))
+    elif query.data == "deposit":
+        await query.message.reply_text("📥 Send screenshot after payment.")
+        await context.bot.send_message(ADMIN_ID, f"User {uid} wants to deposit.")
 
-print("Bot running...")
+    elif query.data == "withdraw":
+        if user["deposited"] < 101:
+            await query.message.reply_text("❌ Deposit ₹101 minimum first")
+        else:
+            await context.bot.send_message(ADMIN_ID, f"Withdraw request from {uid}")
+            await query.message.reply_text("⏳ Withdrawal request sent")
 
-app.run_polling()
+    elif query.data == "refer":
+        link = f"https://t.me/{context.bot.username}?start={uid}"
+        await query.message.reply_text(f"🔗 Your link:\n{link}")
+
+    elif query.data == "leader":
+        top = sorted(users.items(), key=lambda x: x[1]["balance"], reverse=True)[:5]
+        text = "🏆 Leaderboard:\n"
+        for i, (u, d) in enumerate(top):
+            text += f"{i+1}. {u} - ₹{d['balance']}\n"
+        await query.message.reply_text(text)
+
+# ---------- ADMIN COMMANDS ----------
+async def add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    uid = context.args[0]
+    amount = int(context.args[1])
+
+    get_user(uid)["balance"] += amount
+    get_user(uid)["deposited"] += amount
+
+    save_data(users)
+
+    await context.bot.send_message(uid, f"✅ ₹{amount} added")
+    await update.message.reply_text("Done")
+
+async def deduct_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    uid = context.args[0]
+    amount = int(context.args[1])
+
+    get_user(uid)["balance"] -= amount
+
+    save_data(users)
+
+    await context.bot.send_message(uid, f"❌ ₹{amount} deducted")
+    await update.message.reply_text("Done")
+
+# ---------- REGISTER ----------
+app_bot.add_handler(CommandHandler("start", start))
+app_bot.add_handler(CallbackQueryHandler(button))
+app_bot.add_handler(CommandHandler("add", add_balance))
+app_bot.add_handler(CommandHandler("deduct", deduct_balance))
+
+# ---------- FLASK ----------
+flask_app = Flask(__name__)
+
+@flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
+async def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, app_bot.bot)
+    await app_bot.process_update(update)
+    return "ok"
+
+@flask_app.route("/")
+def home():
+    return "Bot Running"
+
+# ---------- START ----------
+if __name__ == "__main__":
+    import asyncio
+
+    async def main():
+        await app_bot.initialize()
+        await app_bot.bot.set_webhook(f"{RENDER_URL}/{BOT_TOKEN}")
+
+    asyncio.run(main())
+
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
