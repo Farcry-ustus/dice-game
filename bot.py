@@ -5,7 +5,7 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKe
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ===== CONFIG =====
-BOT_TOKEN = 8749615890:AAHqCJAy7Dr23sXF6Z37YrIjxbCMKZ8Vuxw
+BOT_TOKEN = "8749615890:AAHqCJAy7Dr23sXF6Z37YrIjxbCMKZ8Vuxw"
 ADMIN_ID = 8190804216
 BOT_USERNAME = "CRYPWIN_BOT"
 WEB_APP_URL = "https://jovial-beignet-2537d3.netlify.app/"
