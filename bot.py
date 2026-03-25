@@ -7,11 +7,14 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=True)
+bot.remove_webhook()
+
 app = Flask(__name__)
 
 DATA_FILE = "users.json"
 
+# ---------------- DATABASE ----------------
 def load():
     if not os.path.exists(DATA_FILE):
         return {"users": {}, "deposits": [], "withdraws": [], "pending": {}}
@@ -20,14 +23,19 @@ def load():
 def save(data):
     json.dump(data, open(DATA_FILE, "w"), indent=2)
 
-# ---------- START ----------
+# ---------------- START ----------------
 @bot.message_handler(commands=['start'])
 def start(msg):
     uid = str(msg.chat.id)
     data = load()
 
     if uid not in data["users"]:
+        ref = msg.text.split(" ")[1] if len(msg.text.split()) > 1 else None
         data["users"][uid] = {"balance": 0, "deposit": 0}
+
+        if ref and ref in data["users"]:
+            data["users"][ref]["balance"] += 30
+            bot.send_message(ref, f"🎉 You invited {msg.from_user.first_name} & earned ₹30!")
 
     save(data)
 
@@ -39,91 +47,139 @@ def start(msg):
     kb.add(InlineKeyboardButton("📊 Leaderboard", callback_data="lead"))
 
     if msg.chat.id == ADMIN_ID:
-        kb.add(InlineKeyboardButton("👨‍💻 Admin", callback_data="admin"))
+        kb.add(InlineKeyboardButton("👨‍💻 Admin Panel", callback_data="admin"))
 
-    bot.send_message(msg.chat.id, "🏠 Menu", reply_markup=kb)
+    bot.send_message(msg.chat.id, "🏠 Main Menu", reply_markup=kb)
 
-# ---------- BUTTON ----------
+# ---------------- BUTTON ----------------
 @bot.callback_query_handler(func=lambda c: True)
 def buttons(call):
     uid = str(call.message.chat.id)
     data = load()
 
     if call.data == "dep":
-        bot.send_message(uid, "Enter amount (min 101)")
+        bot.send_message(uid, "💰 Enter deposit amount (min ₹101)")
         bot.register_next_step_handler(call.message, deposit_amount)
 
     elif call.data == "wd":
         if data["users"][uid]["deposit"] < 101:
-            bot.send_message(uid, "Deposit ₹101 first")
+            bot.send_message(uid, "❌ Deposit ₹101 first")
             return
-        bot.send_message(uid, "Enter withdraw amount (>100)")
+        bot.send_message(uid, "💸 Enter withdraw amount (>100)")
         bot.register_next_step_handler(call.message, withdraw_amount)
 
     elif call.data == "ref":
-        bot.send_message(uid, f"Referral link:\nhttps://t.me/YOUR_BOT?start={uid}")
+        bot.send_message(uid, f"🔗 Referral:\nhttps://t.me/YOUR_BOT_USERNAME?start={uid}")
 
     elif call.data == "lead":
         bot.send_message(uid,
-        "🏆 Leaderboard:\n1. Laksmin Raja ₹4313\n2. Harshit ₹3409\n3. Taruni ₹3300\n4. Yusufi ₹3090\n5. Dhruv ₹2908")
+        "🏆 Leaderboard:\n"
+        "1. Laksmin Raja ₹4313\n"
+        "2. Harshit ₹3409\n"
+        "3. Taruni ₹3300\n"
+        "4. Yusufi ₹3090\n"
+        "5. Dhruv ₹2908")
 
-# ---------- DEPOSIT ----------
+    elif call.data == "admin" and call.from_user.id == ADMIN_ID:
+        bot.send_message(uid,
+        "👨‍💻 Admin Commands:\n"
+        "/users\n/add user_id amount\n/deduct user_id amount\n/msg user_id message")
+
+    elif call.data.startswith("dep_"):
+        i = int(call.data.split("_")[1])
+        dep = data["deposits"][i]
+        u = dep["user"]
+        amt = dep["amount"]
+
+        data["users"][u]["balance"] += amt
+        data["users"][u]["deposit"] += amt
+        save(data)
+
+        bot.send_message(u, f"✅ Deposit ₹{amt} approved")
+
+    elif call.data.startswith("wd_"):
+        i = int(call.data.split("_")[1])
+        wd = data["withdraws"][i]
+        u = wd["user"]
+        amt = wd["amount"]
+
+        data["users"][u]["balance"] -= amt
+        save(data)
+
+        bot.send_message(u, "✅ Withdrawal successful")
+
+# ---------------- DEPOSIT ----------------
 def deposit_amount(msg):
     uid = str(msg.chat.id)
-    amt = int(msg.text)
     data = load()
 
+    try:
+        amt = int(msg.text)
+    except:
+        bot.send_message(uid, "Enter valid number")
+        return
+
     if amt < 101:
-        bot.send_message(uid, "Minimum 101")
+        bot.send_message(uid, "Minimum ₹101")
         return
 
     data["pending"][uid] = amt
     save(data)
 
-    bot.send_message(ADMIN_ID, f"User {uid} deposit ₹{amt}\nSend QR")
-    bot.send_message(uid, "Waiting for QR...")
+    bot.send_message(ADMIN_ID, f"💳 User {uid} wants to deposit ₹{amt}\nSend QR")
+    bot.send_message(uid, "⏳ Waiting for QR...")
 
-# ---------- WITHDRAW ----------
+# ---------------- WITHDRAW ----------------
 def withdraw_amount(msg):
     uid = str(msg.chat.id)
-    amt = int(msg.text)
     data = load()
 
-    if amt <= 100 or data["users"][uid]["balance"] < amt:
-        bot.send_message(uid, "Invalid amount")
+    try:
+        amt = int(msg.text)
+    except:
+        bot.send_message(uid, "Enter valid number")
         return
 
-    bot.send_message(uid, "Send bank + IFSC")
+    if amt <= 100 or data["users"][uid]["balance"] < amt:
+        bot.send_message(uid, "❌ Invalid amount")
+        return
+
+    bot.send_message(uid, "🏦 Send Account Number + IFSC")
     bot.register_next_step_handler(msg, withdraw_details, amt)
 
 def withdraw_details(msg, amt):
     uid = str(msg.chat.id)
     data = load()
 
-    data["withdraws"].append({"user": uid, "amount": amt, "details": msg.text})
+    data["withdraws"].append({
+        "user": uid,
+        "amount": amt,
+        "details": msg.text
+    })
     save(data)
 
     wid = len(data["withdraws"]) - 1
+
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("Approve", callback_data=f"wd_{wid}"))
 
-    bot.send_message(ADMIN_ID, f"Withdraw {uid} ₹{amt}\n{msg.text}", reply_markup=kb)
-    bot.send_message(uid, "Request sent")
+    bot.send_message(ADMIN_ID, f"💸 Withdraw\nUser: {uid}\n₹{amt}\n{msg.text}", reply_markup=kb)
+    bot.send_message(uid, "⏳ Sent to admin")
 
-# ---------- PHOTO ----------
+# ---------------- PHOTO ----------------
 @bot.message_handler(content_types=['photo'])
 def photo(msg):
     uid = str(msg.chat.id)
     data = load()
 
-    # Admin sending QR
+    # ADMIN sending QR
     if msg.chat.id == ADMIN_ID and data["pending"]:
         user = list(data["pending"].keys())[0]
         bot.send_photo(user, msg.photo[-1].file_id)
-        bot.send_message(user, "Send payment screenshot")
+        bot.send_message(user, "📸 Send payment screenshot")
         return
 
-    # User sending proof
+    # USER sending proof
     amt = data["pending"].get(uid, 100)
     dep_id = len(data["deposits"])
 
@@ -134,46 +190,62 @@ def photo(msg):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("Approve", callback_data=f"dep_{dep_id}"))
 
-    bot.send_photo(ADMIN_ID, msg.photo[-1].file_id, caption=f"Proof {uid}", reply_markup=kb)
-    bot.send_message(uid, "Sent for approval")
+    bot.send_photo(ADMIN_ID, msg.photo[-1].file_id,
+                   caption=f"Deposit proof {uid}",
+                   reply_markup=kb)
 
-# ---------- APPROVAL ----------
-@bot.callback_query_handler(func=lambda c: c.data.startswith("dep_") or c.data.startswith("wd_"))
-def approve(call):
+    bot.send_message(uid, "✅ Sent for approval")
+
+# ---------------- ADMIN COMMANDS ----------------
+@bot.message_handler(commands=['users'])
+def users(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
     data = load()
+    text = "\n".join([f"{u} : ₹{d['balance']}" for u, d in data["users"].items()])
+    bot.send_message(msg.chat.id, text or "No users")
 
-    if call.data.startswith("dep_"):
-        i = int(call.data.split("_")[1])
-        dep = data["deposits"][i]
-        uid = dep["user"]
-        amt = dep["amount"]
-
-        data["users"][uid]["balance"] += amt
-        data["users"][uid]["deposit"] += amt
-
-        bot.send_message(uid, f"Deposit ₹{amt} approved")
-
-    if call.data.startswith("wd_"):
-        i = int(call.data.split("_")[1])
-        wd = data["withdraws"][i]
-        uid = wd["user"]
-        amt = wd["amount"]
-
-        data["users"][uid]["balance"] -= amt
-        bot.send_message(uid, "Withdrawal successful")
-
+@bot.message_handler(commands=['add'])
+def add(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
+    _, uid, amt = msg.text.split()
+    data = load()
+    data["users"][uid]["balance"] += int(amt)
     save(data)
+    bot.send_message(msg.chat.id, "Added")
 
-# ---------- WEBHOOK ----------
+@bot.message_handler(commands=['deduct'])
+def deduct(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
+    _, uid, amt = msg.text.split()
+    data = load()
+    data["users"][uid]["balance"] -= int(amt)
+    save(data)
+    bot.send_message(msg.chat.id, "Deducted")
+
+@bot.message_handler(commands=['msg'])
+def msg_user(msg):
+    if msg.chat.id != ADMIN_ID:
+        return
+    parts = msg.text.split(maxsplit=2)
+    uid = parts[1]
+    message = parts[2]
+    bot.send_message(uid, message)
+
+# ---------------- WEBHOOK ----------------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    bot.process_new_updates([telebot.types.Update.de_json(request.stream.read().decode("utf-8"))])
-    return "ok"
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "ok", 200
 
 @app.route("/")
 def home():
     return "Bot running"
 
-# ---------- START ----------
+# ---------------- START ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
