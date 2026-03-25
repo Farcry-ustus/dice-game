@@ -1,24 +1,27 @@
 import json
 import os
+import asyncio
 from flask import Flask, request
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-# ---------------- CONFIG ----------------
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"
-
-bot = Bot(TOKEN)
-updater = Updater(TOKEN, use_context=True)
-dp = updater.dispatcher
 
 DATA_FILE = "users.json"
 
 # ---------------- DATABASE ----------------
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {"users": {}, "deposits": [], "withdraws": []}
+        return {"users": {}, "deposits": [], "withdraws": [], "pending_qr": {}}
     with open(DATA_FILE, "r") as f:
         return json.load(f)
 
@@ -26,8 +29,12 @@ def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
+# ---------------- INIT ----------------
+telegram_app = ApplicationBuilder().token(TOKEN).build()
+app = Flask(__name__)
+
 # ---------------- START ----------------
-def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
     data = load_data()
@@ -38,7 +45,9 @@ def start(update, context):
 
         if ref and ref in data["users"]:
             data["users"][ref]["balance"] += 30
-            bot.send_message(ref, f"🎉 You invited {user.first_name} and got ₹30!")
+            await context.bot.send_message(
+                ref, f"🎉 You invited {user.first_name} and earned ₹30!"
+            )
 
     save_data(data)
 
@@ -53,32 +62,32 @@ def start(update, context):
     if user.id == ADMIN_ID:
         keyboard.append([InlineKeyboardButton("👨‍💻 Admin Panel", callback_data="admin")])
 
-    update.message.reply_text("🏠 Main Menu", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("🏠 Main Menu", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # ---------------- BUTTON ----------------
-def button(update, context):
-    query = update.callback_query
-    query.answer()
-    uid = str(query.from_user.id)
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    uid = str(q.from_user.id)
     data = load_data()
 
-    if query.data == "deposit":
+    if q.data == "deposit":
         context.user_data["state"] = "deposit_amount"
-        query.message.reply_text("Enter deposit amount (min ₹101)")
+        await q.message.reply_text("💰 Enter amount (min ₹101)")
 
-    elif query.data == "withdraw":
+    elif q.data == "withdraw":
         if data["users"][uid]["deposit"] < 101:
-            query.message.reply_text("❌ Deposit ₹101 first")
+            await q.message.reply_text("❌ Deposit ₹101 first")
             return
         context.user_data["state"] = "withdraw_amount"
-        query.message.reply_text("Enter withdraw amount (>100)")
+        await q.message.reply_text("💸 Enter withdraw amount (>100)")
 
-    elif query.data == "ref":
+    elif q.data == "ref":
         link = f"https://t.me/YOUR_BOT_USERNAME?start={uid}"
-        query.message.reply_text(f"🔗 Referral:\n{link}")
+        await q.message.reply_text(f"🔗 Referral:\n{link}")
 
-    elif query.data == "leader":
-        query.message.reply_text(
+    elif q.data == "leader":
+        await q.message.reply_text(
             "🏆 Leaderboard:\n"
             "1. Laksmin Raja ₹4313\n"
             "2. Harshit ₹3409\n"
@@ -87,14 +96,14 @@ def button(update, context):
             "5. Dhruv ₹2908"
         )
 
-    elif query.data == "admin" and query.from_user.id == ADMIN_ID:
-        query.message.reply_text(
-            "👨‍💻 Admin Panel:\n"
+    elif q.data == "admin" and q.from_user.id == ADMIN_ID:
+        await q.message.reply_text(
+            "👨‍💻 Admin Commands:\n"
             "/users\n/add user_id amount\n/deduct user_id amount\n/msg user_id message"
         )
 
-    elif query.data.startswith("approve_dep_"):
-        i = int(query.data.split("_")[-1])
+    elif q.data.startswith("approve_dep_"):
+        i = int(q.data.split("_")[-1])
         dep = data["deposits"][i]
         uid2 = dep["user"]
         amt = dep["amount"]
@@ -103,10 +112,10 @@ def button(update, context):
         data["users"][uid2]["deposit"] += amt
         save_data(data)
 
-        bot.send_message(uid2, f"✅ Deposit ₹{amt} approved")
+        await context.bot.send_message(uid2, f"✅ Deposit ₹{amt} approved")
 
-    elif query.data.startswith("approve_wd_"):
-        i = int(query.data.split("_")[-1])
+    elif q.data.startswith("approve_wd_"):
+        i = int(q.data.split("_")[-1])
         wd = data["withdraws"][i]
         uid2 = wd["user"]
         amt = wd["amount"]
@@ -114,36 +123,42 @@ def button(update, context):
         data["users"][uid2]["balance"] -= amt
         save_data(data)
 
-        bot.send_message(uid2, "✅ Withdrawal completed")
+        await context.bot.send_message(uid2, "✅ Withdrawal successful")
 
 # ---------------- TEXT ----------------
-def text(update, context):
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text
     data = load_data()
     state = context.user_data.get("state")
 
+    # DEPOSIT
     if state == "deposit_amount":
         amt = int(text)
         if amt < 101:
-            update.message.reply_text("Minimum ₹101")
+            await update.message.reply_text("❌ Minimum ₹101")
             return
 
         context.user_data["amount"] = amt
-        context.user_data["user"] = uid
+        data["pending_qr"][uid] = amt
+        save_data(data)
 
-        bot.send_message(ADMIN_ID, f"User {uid} wants to deposit ₹{amt}\nSend QR")
-        update.message.reply_text("Waiting for QR...")
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"💳 User {uid} wants to deposit ₹{amt}\nSend QR image now"
+        )
+        await update.message.reply_text("⏳ Waiting for QR...")
 
+    # WITHDRAW
     elif state == "withdraw_amount":
         amt = int(text)
         if amt <= 100 or data["users"][uid]["balance"] < amt:
-            update.message.reply_text("Invalid amount")
+            await update.message.reply_text("❌ Invalid amount")
             return
 
         context.user_data["amount"] = amt
         context.user_data["state"] = "bank"
-        update.message.reply_text("Send account number + IFSC")
+        await update.message.reply_text("🏦 Send Account + IFSC")
 
     elif state == "bank":
         amt = context.user_data["amount"]
@@ -158,92 +173,108 @@ def text(update, context):
         wid = len(data["withdraws"]) - 1
         keyboard = [[InlineKeyboardButton("Approve", callback_data=f"approve_wd_{wid}")]]
 
-        bot.send_message(
+        await context.bot.send_message(
             ADMIN_ID,
-            f"Withdraw:\nUser {uid}\n₹{amt}\n{text}",
+            f"💸 Withdraw\nUser: {uid}\n₹{amt}\n{text}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-        update.message.reply_text("Request sent")
+        await update.message.reply_text("⏳ Sent to admin")
 
 # ---------------- PHOTO ----------------
-def photo(update, context):
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     data = load_data()
 
+    # ADMIN sending QR
+    if update.effective_user.id == ADMIN_ID:
+        if data["pending_qr"]:
+            user_id = list(data["pending_qr"].keys())[0]
+            await context.bot.send_photo(user_id, update.message.photo[-1].file_id)
+            await context.bot.send_message(user_id, "📸 Send payment screenshot after paying")
+            return
+
+    # USER sending proof
     dep_id = len(data["deposits"])
-    amt = context.user_data.get("amount", 100)
+    amt = data["pending_qr"].get(uid, 100)
 
     data["deposits"].append({"user": uid, "amount": amt})
+    data["pending_qr"].pop(uid, None)
     save_data(data)
 
     keyboard = [[InlineKeyboardButton("Approve", callback_data=f"approve_dep_{dep_id}")]]
 
-    bot.send_photo(
+    await context.bot.send_photo(
         ADMIN_ID,
         update.message.photo[-1].file_id,
         caption=f"Deposit proof {uid}",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    update.message.reply_text("Sent for approval")
+    await update.message.reply_text("✅ Sent for approval")
 
 # ---------------- ADMIN COMMANDS ----------------
-def users(update, context):
+async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     data = load_data()
     text = "\n".join([f"{u} : ₹{d['balance']}" for u, d in data["users"].items()])
-    update.message.reply_text(text or "No users")
+    await update.message.reply_text(text or "No users")
 
-def add(update, context):
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     uid, amt = context.args
     data = load_data()
     data["users"][uid]["balance"] += int(amt)
     save_data(data)
-    update.message.reply_text("Added")
+    await update.message.reply_text("Added")
 
-def deduct(update, context):
+async def deduct(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     uid, amt = context.args
     data = load_data()
     data["users"][uid]["balance"] -= int(amt)
     save_data(data)
-    update.message.reply_text("Deducted")
+    await update.message.reply_text("Deducted")
 
-def msg(update, context):
+async def msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     uid = context.args[0]
     message = " ".join(context.args[1:])
-    bot.send_message(uid, message)
+    await context.bot.send_message(uid, message)
 
 # ---------------- HANDLERS ----------------
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(CommandHandler("users", users))
-dp.add_handler(CommandHandler("add", add))
-dp.add_handler(CommandHandler("deduct", deduct))
-dp.add_handler(CommandHandler("msg", msg))
-dp.add_handler(CallbackQueryHandler(button))
-dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text))
-dp.add_handler(MessageHandler(Filters.photo, photo))
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("users", users))
+telegram_app.add_handler(CommandHandler("add", add))
+telegram_app.add_handler(CommandHandler("deduct", deduct))
+telegram_app.add_handler(CommandHandler("msg", msg))
+telegram_app.add_handler(CallbackQueryHandler(button))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+telegram_app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
 
 # ---------------- WEBHOOK ----------------
-app = Flask(__name__)
-
 @app.route("/", methods=["GET"])
 def home():
     return "Bot running"
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dp.process_update(update)
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    asyncio.run(telegram_app.process_update(update))
     return "ok"
 
 # ---------------- START ----------------
+async def main():
+    await telegram_app.initialize()
+    await telegram_app.start()
+
 if __name__ == "__main__":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
+
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
