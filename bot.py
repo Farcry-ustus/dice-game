@@ -12,7 +12,7 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = os.getenv("8749615890:AAHqCJAy7Dr23sXF6Z37YrIjxbCMKZ8Vuxw")
+TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"  # 🔥 PUT YOUR LINK
 
