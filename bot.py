@@ -7,7 +7,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"
 
-bot = telebot.TeleBot(TOKEN, threaded=True)
+bot = telebot.TeleBot(TOKEN, threaded=True, num_threads=4)
 
 app = Flask(__name__)
 
@@ -171,14 +171,12 @@ def photo(msg):
     uid = str(msg.chat.id)
     data = load()
 
-    # ADMIN sending QR
     if msg.chat.id == ADMIN_ID and data["pending"]:
         user = list(data["pending"].keys())[0]
         bot.send_photo(user, msg.photo[-1].file_id)
         bot.send_message(user, "📸 Send payment screenshot")
         return
 
-    # USER sending proof
     amt = data["pending"].get(uid, 100)
     dep_id = len(data["deposits"])
 
@@ -195,7 +193,7 @@ def photo(msg):
 
     bot.send_message(uid, "✅ Sent for approval")
 
-# ---------------- ADMIN COMMANDS ----------------
+# ---------------- ADMIN ----------------
 @bot.message_handler(commands=['users'])
 def users(msg):
     if msg.chat.id != ADMIN_ID:
@@ -204,42 +202,16 @@ def users(msg):
     text = "\n".join([f"{u} : ₹{d['balance']}" for u, d in data["users"].items()])
     bot.send_message(msg.chat.id, text or "No users")
 
-@bot.message_handler(commands=['add'])
-def add(msg):
-    if msg.chat.id != ADMIN_ID:
-        return
-    _, uid, amt = msg.text.split()
-    data = load()
-    data["users"][uid]["balance"] += int(amt)
-    save(data)
-    bot.send_message(msg.chat.id, "Added")
-
-@bot.message_handler(commands=['deduct'])
-def deduct(msg):
-    if msg.chat.id != ADMIN_ID:
-        return
-    _, uid, amt = msg.text.split()
-    data = load()
-    data["users"][uid]["balance"] -= int(amt)
-    save(data)
-    bot.send_message(msg.chat.id, "Deducted")
-
-@bot.message_handler(commands=['msg'])
-def msg_user(msg):
-    if msg.chat.id != ADMIN_ID:
-        return
-    parts = msg.text.split(maxsplit=2)
-    uid = parts[1]
-    message = parts[2]
-    bot.send_message(uid, message)
-
 # ---------------- WEBHOOK ----------------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    json_str = request.get_data().decode("utf-8")
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return "ok", 200
+    try:
+        update = telebot.types.Update.de_json(request.json)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print("ERROR:", e)
+
+    return "OK", 200
 
 @app.route("/")
 def home():
