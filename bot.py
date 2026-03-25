@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 TOKEN = os.getenv("8749615890:AAHqCJAy7Dr23sXF6Z37YrIjxbCMKZ8Vuxw")
-ADMIN_ID = int(os.getenv("8190804216"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"  # 🔥 PUT YOUR LINK
 
 DATA_FILE = "users.json"
