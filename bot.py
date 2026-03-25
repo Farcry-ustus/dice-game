@@ -8,7 +8,6 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 GAME_URL = "https://jovial-beignet-2537d3.netlify.app/"
 
 bot = telebot.TeleBot(TOKEN, threaded=True)
-bot.remove_webhook()
 
 app = Flask(__name__)
 
